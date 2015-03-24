@@ -10,9 +10,8 @@
 # it under the terms of version 2 (or later) of the GNU General Public
 # License as published by the Free Software Foundation.
 
-import plac
 import logging
-
+import argparse
 import sys
 import os
 import re
@@ -546,33 +545,18 @@ class TrackSetHandler(object):
             logging.error("Failed to save %s. Skipping. The exception was:\n\n%s\n", track_set.track_set_key_string, traceback.format_exc())
         return track_set
 
-def positive_int(x):
-    i = int(x)
-    if i < 1:
-        raise ValueError()
-    else:
-        return i
 
-@plac.annotations(
-    # arg=(helptext, kind, abbrev, type, choices, metavar)
-    force_reanalyze=('Reanalyze all files and recalculate replaygain values, even if the files already have valid replaygain tags. Normally, only files without replaygain tags will be analyzed.', "flag", "f"),
-    include_hidden=('Do not skip hidden files and directories.', "flag", "i"),
-    gain_type=('Can be "album", "track", or "auto". If "track", only track gain values will be calculated, and album gain values will be erased. if "album", both track and album gain values will be calculated. If "auto", then "album" mode will be used except in directories that contain a file called "TRACKGAIN" or ".TRACKGAIN". In these directories, "track" mode will be used. The default setting is "auto".',
-        "option", "g", str, ('album', 'track', 'auto')),
-    dry_run=("Don't modify any files. Only analyze and report gain.",
-        "flag", "n"),
-    music_directories=("Directories in which to search for music files.", "positional"),
-    jobs=("Number of albums to analyze in parallel. The default is the number of cores detected on your system.", "option", "j", positive_int),
-    quiet=("Do not print informational messages.", "flag", "q"),
-    verbose=("Print debug messages that are probably only useful if something is going wrong.", "flag", "v"),
-    )
-def main(force_reanalyze=False, include_hidden=False,
+def positive_int(value):
+    ivalue = int(value)
+    if ivalue <= 0:
+         raise argparse.ArgumentTypeError("%s is an invalid positive int value" % value)
+    return ivalue
+
+
+def main(music_paths, force_reanalyze=False, include_hidden=False,
          dry_run=False, gain_type='auto',
          jobs=default_job_count(),
-         quiet=False, verbose=False,
-         *music_directories
-         ):
-    """Add replaygain tags to your music files."""
+         quiet=False, verbose=False):
     if quiet:
         logging.basicConfig(level=logging.WARN)
     elif verbose:
@@ -592,12 +576,12 @@ def main(force_reanalyze=False, include_hidden=False,
     if dry_run:
         logging.warn('This script is running in "dry run" mode, so no files will actually be modified.')
         track_class = RGTrackDryRun
-    if len(music_directories) == 0:
-        logging.error("You did not specify any music directories or files. Exiting.")
+    if len(music_paths) == 0:
+        logging.error("You did not specify any music files or directories. Exiting.")
         sys.exit(1)
 
-    logging.info("Searching for music files in the following directories:\n%s", "\n".join(music_directories),)
-    tracks = [ track_class(f) for f in get_all_music_files(music_directories, ignore_hidden=(not include_hidden)) ]
+    logging.info("Searching for music in the following paths:\n%s", "\n".join(music_paths),)
+    tracks = [ track_class(f) for f in get_all_music_files(music_paths, ignore_hidden=(not include_hidden)) ]
 
     # Filter out tracks for which we can't get the length
     for t in tracks[:]:
@@ -608,7 +592,7 @@ def main(force_reanalyze=False, include_hidden=False,
             tracks.remove(t)
 
     if len(tracks) == 0:
-        logging.error("Failed to find any tracks in the directories you specified. Exiting.")
+        logging.error("Failed to find any tracks in the paths you specified. Exiting.")
         sys.exit(1)
     track_sets = RGTrackSet.MakeTrackSets(tracks)
 
@@ -654,15 +638,35 @@ def main(force_reanalyze=False, include_hidden=False,
             pool.close()
     if dry_run:
         logging.warn('This script ran in "dry run" mode, so no files were actually modified.')
-    pass
+    return 0
 
-# Entry point
-def plac_call_main():
+
+def parse_options():
+    parser = argparse.ArgumentParser(description='Add replaygain tags to your music files.')
+    parser.add_argument('-v', '--verbose', action='store_true', default=False, help="Print debug messages that are probably only useful if something is going wrong.")
+    parser.add_argument('-q', '--quiet', action='store_true', default=False, help="Do not print informational messages.")
+    parser.add_argument('-j', '--jobs', action='store', type=positive_int, default=default_job_count(), help="Number of albums to analyze in parallel. The default is the number of cores detected on your system.")
+    parser.add_argument('-n', '--dry-run', action='store_true', default=False, help="Don't modify any files. Only analyze and report gain.")
+    parser.add_argument('-g', '--gain-type', action='store', choices=("album", "track", "auto"), help='Can be "album", "track", or "auto". If "track", only track gain values will be calculated, and album gain values will be erased. if "album", both track and album gain values will be calculated. If "auto", then "album" mode will be used except in directories that contain a file called "TRACKGAIN" or ".TRACKGAIN". In these directories, "track" mode will be used. The default setting is "auto".')
+    parser.add_argument('-i', '--include-hidden', action='store_true', help='Do not skip hidden files and directories.')
+    parser.add_argument('-f', '--force-reanalyze', action='store_true', help='Reanalyze all files and recalculate replaygain values, even if the files already have valid replaygain tags. Normally, only files without replaygain tags will be analyzed.')
+    parser.add_argument('--version', action='store_true', help='display the version number')
+    parser.add_argument('music_paths', metavar='music_path', nargs='+', help="Music files or directories to search for music tracks.")
+    return parser.parse_args()
+
+
+if __name__=="__main__":
     try:
-        return plac.call(main)
+        options = parse_options()
+        res = main(options.music_paths,
+             force_reanalyze=options.force_reanalyze,
+             include_hidden=options.include_hidden,
+             dry_run=options.dry_run,
+             gain_type=options.gain_type,
+             jobs=options.jobs,
+             quiet=options.quiet,
+             verbose=options.verbose)
+        sys.exit(res)
     except KeyboardInterrupt:
         logging.error("Canceled.")
         sys.exit(1)
-
-if __name__=="__main__":
-    plac_call_main()
