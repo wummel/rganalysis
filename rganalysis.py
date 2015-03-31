@@ -10,6 +10,7 @@
 # it under the terms of version 2 (or later) of the GNU General Public
 # License as published by the Free Software Foundation.
 
+__version__ = '0.2'
 import logging
 import argparse
 import sys
@@ -17,7 +18,6 @@ import os
 import re
 from os.path import realpath
 import math
-import traceback
 import signal
 
 # Needed for making threads work for pygst, or something. Why doesn't
@@ -34,7 +34,6 @@ quodlibet.config.init()
 
 from quodlibet.formats import MusicFile
 
-from itertools import imap
 import multiprocessing
 from multiprocessing.pool import Pool
 
@@ -174,6 +173,7 @@ class RGTrackSet(object):
             self.analyzed = True
         else:
             self.analyzed = False
+        self.errors = 0
 
     def __repr__(self):
         return "RGTrackSet(%s, gain_type=%s)" % (repr(self.RGTracks.values()), repr(self.gain_type))
@@ -259,6 +259,10 @@ class RGTrackSet(object):
     def directory():
         def fget(self):
             return self.track_set_key[1]
+
+    def log_exception(self, msg):
+        logging.exception("%s %s", msg, self.track_set_key_string)
+        self.errors += 1
 
     def __len__(self):
         return self.length_seconds
@@ -510,6 +514,7 @@ def get_all_music_files (paths, ignore_hidden=True):
     for p in paths:
         if os.path.isdir(p):
             for root, dirs, files in os.walk(p, followlinks=True):
+                logging.debug("Walking %s", root)
                 if ignore_hidden:
                     files = remove_hidden_paths(files)
                     dirs = remove_hidden_paths(dirs)
@@ -526,23 +531,21 @@ def get_all_music_files (paths, ignore_hidden=True):
     return(unique(music_files, key_fun=lambda x: x['~filename']))
 
 class TrackSetHandler(object):
-    """Pickleable stateful callable for multiprocessing.Pool.imap"""
+    """Pickleable stateful callable for multiprocessing.Pool"""
     def __init__(self, force=False, gain_type="auto"):
         self.force = force
         self.gain_type = gain_type
+
     def __call__(self, track_set):
         try:
             track_set.analyze(force=self.force, gain_type=self.gain_type)
         except Exception:
-            logging.error("Failed to analyze %s. Skipping this track set. The exception was:\n\n%s\n", track_set.track_set_key_string, traceback.format_exc())
-
-        try:
-            if track_set.analyzed:
+            track_set.log_exception("Failed to analyze")
+        else:
+            try:
                 track_set.save()
-            else:
-                logging.error("Not saving %s because it was not analyzed successfully." % track_set.track_set_key_string)
-        except Exception:
-            logging.error("Failed to save %s. Skipping. The exception was:\n\n%s\n", track_set.track_set_key_string, traceback.format_exc())
+            except Exception:
+                track_set.log_exception("Failed to save")
         return track_set
 
 
@@ -558,11 +561,13 @@ def main(music_paths, force_reanalyze=False, include_hidden=False,
          jobs=default_job_count(),
          quiet=False, verbose=False):
     if quiet:
-        logging.basicConfig(level=logging.WARN)
+        level=logging.WARN
     elif verbose:
-        logging.basicConfig(level=logging.DEBUG)
+        level=logging.DEBUG
     else:
-        logging.basicConfig(level=logging.INFO)
+        level=logging.INFO
+    format = "%(asctime)s %(levelname)s %(message)s"
+    logging.basicConfig(level=level, format=format)
 
     # Some pesky functions used below will catch KeyboardInterrupts
     # inappropriately, so install an alternate handler that bypasses
@@ -610,35 +615,31 @@ def main(music_paths, force_reanalyze=False, include_hidden=False,
     update_string = '%.' + str(places_past_decimal) + 'f%% done'
 
     import gst
-    pool = None
+    errors = 0
+    pool = Pool(jobs)
     try:
-        if jobs == 1:
-            # Sequential
-            handled_track_sets = imap(handler, track_sets)
-        else:
-            # Parallel
-            pool = Pool(jobs)
-            handled_track_sets = pool.imap_unordered(handler,track_sets)
-        processed_length = 0
-        percent_done = 0
-        for ts in handled_track_sets:
-            processed_length = processed_length + len(ts)
-            percent_done = 100.0 * processed_length / total_length
-            logging.info(update_string, percent_done)
-        logging.info("Analysis complete.")
+        # start parallel analysis
+        handled_track_sets = pool.imap_unordered(handler, track_sets)
+        logging.debug("Closing pool")
+        pool.close()
+        logging.debug("Joining pool")
+        pool.join()
     except KeyboardInterrupt:
-        if pool is not None:
-            logging.debug("Terminating process pool")
-            pool.terminate()
-            pool = None
+        logging.debug("Terminating process pool")
+        pool.terminate()
         raise
-    finally:
-        if pool is not None:
-            logging.debug("Closing transcode process pool")
-            pool.close()
+    logging.info("Calculating stats")
+    processed_length = 0
+    percent_done = 0
+    for ts in handled_track_sets:
+        processed_length = processed_length + len(ts)
+        percent_done = 100.0 * processed_length / total_length
+        logging.info(update_string, percent_done)
+        errors += ts.errors
+    logging.info("Analysis complete.")
     if dry_run:
         logging.warn('This script ran in "dry run" mode, so no files were actually modified.')
-    return 0
+    return 1 if errors > 0 else 0
 
 
 def parse_options():
@@ -651,13 +652,16 @@ def parse_options():
     parser.add_argument('-i', '--include-hidden', action='store_true', help='Do not skip hidden files and directories.')
     parser.add_argument('-f', '--force-reanalyze', action='store_true', help='Reanalyze all files and recalculate replaygain values, even if the files already have valid replaygain tags. Normally, only files without replaygain tags will be analyzed.')
     parser.add_argument('--version', action='store_true', help='display the version number')
-    parser.add_argument('music_paths', metavar='music_path', nargs='+', help="Music files or directories to search for music tracks.")
+    parser.add_argument('music_paths', metavar='music_path', nargs='*', help="Music files or directories to search for music tracks.")
     return parser.parse_args()
 
 
 if __name__=="__main__":
     try:
         options = parse_options()
+        if options.version:
+            print __version__
+            sys.exit(0)
         res = main(options.music_paths,
              force_reanalyze=options.force_reanalyze,
              include_hidden=options.include_hidden,
