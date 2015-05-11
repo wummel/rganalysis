@@ -5,39 +5,42 @@ help text (`rganalysis.py --help`) contains (almost) all you need to
 know:
 
 <pre><code>
-usage: rganalysis.py [-h] [-f] [-i] [-n] [-g auto] [-j 2] [-q] [-v]
-                     [music_directories [music_directories ...]]
+usage: rganalysis.py [-h] [-v] [-q] [-j JOBS] [-n]
+                     [-g {album,track,folder,auto}] [-i] [-f] [--version]
+                     [music_path [music_path ...]]
 
 Add replaygain tags to your music files.
 
 positional arguments:
-  music_directories     Directories in which to search for music files.
+  music_path            Music files or directories to search for music tracks.
 
 optional arguments:
   -h, --help            show this help message and exit
-  -f, --force-reanalyze, --force_reanalyze
+  -v, --verbose         Print debug messages that are probably only useful if
+                        something is going wrong.
+  -q, --quiet           Do not print informational messages.
+  -j JOBS, --jobs JOBS  Number of albums to analyze in parallel. The default
+                        is the number of cores detected on your system.
+  -n, --dry-run         Don't modify any files. Only analyze and report gain.
+  -g {album,track,folder,auto}, --gain-type {album,track,folder,auto}
+                        Can be "album", "track", "folder" or "auto". If
+                        "track", only track gain values will be calculated,
+                        and album gain values will be erased. If "album", both
+                        track and album gain values will be calculated for
+                        detected albums. If "folder", both track and album
+                        gain values will be calculated for files in the same
+                        folder. If "auto", then "album" mode will be used
+                        except in directories that contain a file called
+                        "TRACKGAIN" or ".TRACKGAIN". In these directories,
+                        "track" mode will be used. The default setting is
+                        "auto".
+  -i, --include-hidden  Do not skip hidden files and directories.
+  -f, --force-reanalyze
                         Reanalyze all files and recalculate replaygain values,
                         even if the files already have valid replaygain tags.
                         Normally, only files without replaygain tags will be
                         analyzed.
-  -i, --include-hidden, --include_hidden
-                        Do not skip hidden files and directories.
-  -n, --dry-run, --dry_run
-                        Don't modify any files. Only analyze and report gain.
-  -g auto, --gain-type auto, --gain_type auto
-                        Can be "album", "track", or "auto". If "track", only
-                        track gain values will be calculated, and album gain
-                        values will be erased. if "album", both track and
-                        album gain values will be calculated. If "auto", then
-                        "album" mode will be used except in directories that
-                        contain a file called "TRACKGAIN" or ".TRACKGAIN". In
-                        these directories, "track" mode will be used. The
-                        default setting is "auto".
-  -j 2, --jobs 2        Number of albums to analyze in parallel. The default
-                        is the number of cores detected on your system.
-  -q, --quiet           Do not print informational messages.
-  -v, --verbose         Print debug messages that are probably only useful if
-                        something is going wrong.
+  --version             display the version number
 </pre></code>
 
 ## What is an album?
@@ -52,16 +55,26 @@ the FLACs too quiet, or vice versa.
 Anyway, this script considers two tracks to belong to the same "track
 set" for the purposes of calculating audiophile gain if:
 
+* They are in the same directory on the filesystem
 * They have the same album name tag
 * They have the same disc number tag (or lack thereof)
-* They are in the same directory on the filesystem
 * They are both the same music format (MP3, OGG, FLAC, etc.)
 
-I may add "same album artist" to this list in the future
+When selecting "folder" as the --gain-type option, only the first
+requirement (same directory) defines an album. This is useful if
+all playlists and albums are stored in folders.
+
+## Requirements
+
+rganalysis.py uses GStreamer for ReplayGain analysis and Quodlibet
+for music file modification.
+
+On a Debian or Ubuntu system execute ``sudo apt-get install quodlibet``
+to install all dependencies.
 
 ## See also
 
-[Transfercoder](https://github.com/DarwinAwardWinner/transfercoder), a
+[Transfercoder](https://github.com/wummel/transfercoder), a
 tool for transferring your music to your portable mp3 player while
 simultaneously transcoding music formats that the player doesn't
 recognize.
