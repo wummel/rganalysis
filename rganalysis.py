@@ -266,8 +266,11 @@ class RGTrackSet(object):
         def fget(self):
             return next(self.RGTracks.itervalues()).track_set_key
 
+    def __unicode__(self):
+        return unicode(next(self.RGTracks.itervalues()))
+
     def __str__(self):
-        return str(next(self.RGTracks.itervalues()))
+        return unicode(self).encode("iso-8859-1", "replace")
 
     @Property
     def directory():
@@ -327,9 +330,9 @@ class RGTrackSet(object):
         if self.analyzed:
             logging.info('Skipping track set "%s", which is already analyzed.', self)
         else:
-            # Only want album gain for real albums, not single tracks
-            logging.info('Analyzing track set "%s"', self)
+            logging.info('Analyzing %d tracks of "%s"', self.num_tracks, self)
             rgdata = Analyzer(self.filenames).data
+            # Only want album gain for real albums, not single tracks
             if self.want_album_gain():
                 self.gain = rgdata['album_gain']
                 self.peak = rgdata['album_peak']
@@ -437,18 +440,21 @@ class RGTrack(object):
         def fset(self, value):
             self.track['~filename'] = value
 
-    def __str__(self):
+    def __unicode__(self):
         '''A human-readable string representation of this track.'''
-        album = self.track("albumsort", "")
+        album = self.track("albumsort", u"")
         directory = os.path.dirname(self.filename)
         filetype = type(self.track)
-        if album == '':
-            key_string = "No album"
+        if album == u'':
+            key_string = u"No album"
         else:
             key_string = album
-        key_string += " in directory %s" % (directory,)
-        key_string += " of type %s" % (re.sub("File$","",filetype.__name__),)
+        key_string += u" in directory %s" % directory
+        key_string += u" of type %s" % (re.sub(u"File$",u"",filetype.__name__),)
         return key_string
+
+    def __str__(self):
+        return unicode(self).encode("iso-8859-1", "replace")
 
     @Property
     def gain():
@@ -611,15 +617,18 @@ def main(music_paths, force_reanalyze=False, include_hidden=False,
         logging.error("Failed to find any valid tracks in the paths you specified. Exiting.")
         sys.exit(1)
     track_sets = RGTrackSet.MakeTrackSets(tracks)
+    num_track_sets = len(track_sets)
+    num_tracks = sum(ts.num_tracks for ts in track_sets)
+    logging.info("Found %d track sets with %d tracks total.", num_track_sets, num_tracks)
 
     # Remove the earlier bypass of KeyboardInterrupt
     signal.signal(signal.SIGINT, original_handler)
 
-    logging.info("Beginning analysis")
     handler = TrackSetHandler(force=force_reanalyze)
 
     # For display purposes, calculate how much granularity is required
     # to show visible progress at each update
+    logging.info("Calculating stats")
     total_length = sum(len(ts) for ts in track_sets)
     min_step = min(len(ts) for ts in track_sets)
     places_past_decimal = max(0,int(math.ceil(-math.log10(min_step * 100.0 / total_length))))
@@ -629,10 +638,11 @@ def main(music_paths, force_reanalyze=False, include_hidden=False,
     pool = Pool(jobs)
     try:
         # start parallel analysis
+        logging.info("Beginning analysis")
         handled_track_sets = pool.imap_unordered(handler, track_sets)
-        logging.info("Calculating stats")
         processed_length = 0
         percent_done = 0
+        logging.info(update_string, percent_done)
         for ts in handled_track_sets:
             processed_length = processed_length + len(ts)
             percent_done = 100.0 * processed_length / total_length
