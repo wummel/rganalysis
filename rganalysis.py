@@ -16,7 +16,7 @@ import argparse
 import sys
 import os
 import re
-from os.path import realpath
+from os.path import realpath, normpath, normcase
 import math
 import signal
 
@@ -41,6 +41,10 @@ def default_job_count():
         return multiprocessing.cpu_count()
     except Exception:
         return 1
+
+def norm(filename):
+    return normcase(normpath(realpath(filename)))
+
 
 def decode_filename(f):
     if isinstance(f, str):
@@ -507,18 +511,6 @@ def is_hidden_path(path):
     return _hidden_path_re.search(path)
 
 
-def unique (items, key_fun = None):
-    '''Return an unique sequence of items, where two items are considered
-    non-unique if key_fun returns the same value for both of them.
-
-    If no key_fun is provided, then the identity function is assumed,
-    in which case this is equivalent to set(items).'''
-    if key_fun is None:
-        return set(items)
-    else:
-        return dict((key_fun(i), i) for i in items).values()
-
-
 def get_all_music_files (paths, ignore_hidden=True):
     '''Recursively search in one or more paths for music files.
     By default, hidden files and directories are ignored.'''
@@ -532,18 +524,19 @@ def get_all_music_files (paths, ignore_hidden=True):
                     for dirname in dirs[:]:
                         if is_hidden_path(dirname):
                             dirs.remove(dirname)
-                filenames.update(os.path.join(root, f) for f in files)
+                filenames.update(norm(os.path.join(root, f)) for f in files)
         else:
-            filenames.add(p)
+            filenames.add(norm(p))
+    logging.debug("Found %d files", len(filenames))
     # Try to load every file as an audio file, and filter the
     # ones that aren't actually audio files
     music_files = []
     for filename in filenames:
-        mf = MusicFile(filename)
-        if mf is not None:
-            music_files.append(mf)
-    # Filter duplicate files and return
-    return unique(music_files, key_fun=lambda x: x['~filename'])
+        if os.path.isfile(filename):
+            logging.debug("Loading %r", filename)
+            mf = MusicFile(filename)
+            if mf is not None:
+                yield mf
 
 
 class TrackSetHandler(object):
