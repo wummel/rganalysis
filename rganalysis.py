@@ -754,7 +754,7 @@ def main(music_paths, force_reanalyze=False, include_hidden=False,
         logging.debug("Terminating process pool")
         pool.terminate()
         raise
-    logging.info("Analysis complete.")
+    logging.info("Analysis complete with %d errors.", errors)
     if dry_run:
         logging.warn('This script ran in "dry run" mode, so no files were actually modified.')
     elif not errors:
