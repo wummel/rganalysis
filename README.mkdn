@@ -43,6 +43,13 @@ optional arguments:
   --version             display the version number
 </pre></code>
 
+## Change detection
+
+For each music path the last analysis date is remembered in the
+~/.config/rganalysis/lastruns file.
+If none of the given music paths are newer than the remembered date
+then analysis is skipped.
+
 ## What is an album?
 
 When doing "album" or "audiophile" Replay Gain tags, one needs to

@@ -19,6 +19,9 @@ import re
 from os.path import realpath, normpath, normcase
 import math
 import signal
+import datetime
+import time
+import pickle
 
 # Initialize the quodlibet config so tag editing will work correctly
 import quodlibet.config
@@ -37,19 +40,90 @@ import multiprocessing
 from multiprocessing.pool import Pool
 
 def default_job_count():
+    """Get default job count which is the number of CPU cores, or 1
+    if no CPU core count is available.
+    """
     try:
         return multiprocessing.cpu_count()
     except Exception:
         return 1
 
+
 def norm(filename):
+    """Norm case and path of given filename."""
     return normcase(normpath(realpath(filename)))
 
 
 def decode_filename(f):
+    """Decode filename with filesystem encoding."""
     if isinstance(f, str):
         f = f.decode(sys.getfilesystemencoding())
     return f
+
+
+def get_config_dir():
+    """Get configuration directory."""
+    confdir = os.environ.get("XDG_CONFIG_HOME")
+    if not confdir:
+        confdir = os.path.expanduser("~")
+        if confdir == "~":
+            confdir = os.curdir()
+        confdir = os.path.join(confdir, ".config")
+    return os.path.join(confdir, "rganalysis")
+
+
+def get_last_runtime_file():
+    """Get filename of last runtime file."""
+    confdir = get_config_dir()
+    return os.path.join(confdir, "lastrun.dict")
+
+
+def get_last_runtime_dict():
+    """Load runtime cache."""
+    last_runtime_file = get_last_runtime_file()
+    if os.path.isfile(last_runtime_file):
+        try:
+            with open(last_runtime_file, "rb") as f:
+                return pickle.load(f)
+        except Exception, msg:
+            logging.info("No last runtime dict at %s: %s", last_runtime_file, msg)
+    return {}
+
+
+def write_last_runtime_dict(runtime_dict):
+    """Write dictionary with last runtime data."""
+    confdir = get_config_dir()
+    if not os.path.isdir(confdir):
+        try:
+            os.makedirs(confdir)
+        except OSError as exc: # Python >2.5
+            logging.warn("Could not create configuration directory `%s': %s", confdir, exc)
+            return
+    cur_runtime_dict = get_last_runtime_dict
+    last_runtime_file = get_last_runtime_file()
+    with open(last_runtime_file, "wb") as f:
+        pickle.dump(runtime_dict, f, pickle.HIGHEST_PROTOCOL)
+    logging.debug("Wrote last runtime dict at %s", last_runtime_file)
+
+
+def get_last_runtime_key(music_paths):
+    """Return canonical key for given music paths."""
+    return "|".join(sorted(music_paths))
+
+
+def get_mtime(filename):
+    """Return modification time of filename or zero on errors."""
+    try:
+        return os.path.getmtime(filename)
+    except os.error:
+        return 0
+
+
+def format_time(timestamp):
+    """Return human readable time representation of given timestamp in seconds."""
+    dt = datetime.datetime.fromtimestamp(timestamp)
+    return dt.strftime('%Y-%m-%d %H:%M:%S')
+
 
 def Property(function):
     keys = 'fget', 'fset', 'fdel'
@@ -530,13 +604,21 @@ def get_all_music_files (paths, ignore_hidden=True):
     logging.debug("Found %d files", len(filenames))
     # Try to load every file as an audio file, and filter the
     # ones that aren't actually audio files
-    music_files = []
     for filename in filenames:
         if os.path.isfile(filename):
             logging.debug("Loading %r", filename)
             mf = MusicFile(filename)
             if mf is not None:
                 yield mf
+
+
+def get_max_mtime(paths, ignore_hidden=True):
+    """Get maximum modification time for given music paths."""
+    mtime = 0
+    for p in paths:
+         mtime = max(mtime, get_mtime(p))
+    logging.debug("Modification time %s", format_time(mtime))
+    return mtime
 
 
 class TrackSetHandler(object):
@@ -591,6 +673,29 @@ def main(music_paths, force_reanalyze=False, include_hidden=False,
     if len(music_paths) == 0:
         logging.error("You did not specify any music files or directories. Exiting.")
         sys.exit(1)
+    for music_path in music_paths[:]:
+        if not (os.path.isdir(music_path) or os.path.isfile(music_path)):
+            logging.warn("Ignoring `%s' since it's not a file or directory.", music_path)
+            music_paths.remove(music_path)
+    if len(music_paths) == 0:
+        logging.error("No valid music files or directories specified. Exiting.")
+        sys.exit(1)
+
+    last_runtime_dict = get_last_runtime_dict()
+    # for later storage
+    now = time.time()
+    if not force_reanalyze:
+        key = get_last_runtime_key(music_paths)
+        last_runtime = last_runtime_dict.get(key)
+        if last_runtime:
+            max_mtime = get_max_mtime(music_paths, ignore_hidden=(not include_hidden))
+            if max_mtime < last_runtime:
+                logging.info("Last runtime %s is newer than last modification time %s",
+                    format_time(last_runtime), format_time(max_mtime))
+                logging.info("Use --force-reanalyze to reanalyze anyway.")
+                sys.exit(0)
+            logging.info("Last runtime %s is older than last modification time %s",
+                format_time(last_runtime), format_time(max_mtime))
 
     logging.info("Searching for music in the following paths:\n%s", "\n".join(music_paths),)
     files = get_all_music_files(music_paths, ignore_hidden=(not include_hidden))
@@ -652,6 +757,10 @@ def main(music_paths, force_reanalyze=False, include_hidden=False,
     logging.info("Analysis complete.")
     if dry_run:
         logging.warn('This script ran in "dry run" mode, so no files were actually modified.')
+    elif not errors:
+        key = get_last_runtime_key(music_paths)
+        last_runtime_dict[key] = now
+        write_last_runtime_dict(last_runtime_dict)
     return 1 if errors > 0 else 0
 
 
