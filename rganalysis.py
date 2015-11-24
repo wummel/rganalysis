@@ -23,9 +23,11 @@ import datetime
 import time
 import pickle
 
-# Initialize the quodlibet config so tag editing will work correctly
-import quodlibet.config
-quodlibet.config.init()
+# Initialize the quodlibet library so format detection and tag editing
+# will work correctly.
+# Set QUODLIBET_DEBUG=1 environment variable for debugging.
+import quodlibet
+quodlibet.init_cli()
 from quodlibet.formats import MusicFile
 import gi
 gi.require_version('Gst', '1.0')
