@@ -22,6 +22,13 @@ import signal
 import datetime
 import time
 import pickle
+# Use the built-in version of scandir/walk if possible, otherwise
+# use the scandir module version
+try:
+    from os import scandir, walk
+except ImportError:
+    from scandir import scandir, walk
+
 
 # Initialize the quodlibet library so format detection and tag editing
 # will work correctly.
@@ -593,7 +600,7 @@ def get_all_music_files (paths, ignore_hidden=True):
     filenames = set()
     for p in paths:
         if os.path.isdir(p):
-            for root, dirs, files in os.walk(p, followlinks=True, topdown=True):
+            for root, dirs, files in walk(p, followlinks=True, topdown=True):
                 logging.debug("Walking %s", root)
                 if ignore_hidden:
                     files = [f for f in files if not is_hidden_path(f)]
